@@ -1,11 +1,14 @@
 <!-- FILE: index.html
-     WHAT THIS IS:
-     A standalone chatbot you can host for free (GitHub Pages / Netlify / Vercel)
-     It asks 10 questions, saves results to Google Sheets, then shows Calendly.
+     WHAT THIS DOES:
+     - Floating chat widget for real estate sites
+     - Asks 10 qualification questions in order
+     - Validates email + phone
+     - Saves results to Google Sheets via Google Apps Script Web App
+     - After Q10, shows Calendly scheduling INSIDE the chat (fixed + full size)
 
-     WHAT YOU MUST EDIT:
-     1) PASTE YOUR GOOGLE APPS SCRIPT WEB APP URL into GOOGLE_WEBHOOK_URL
-     2) PASTE YOUR CALENDLY LINK into CALENDLY_URL
+     YOUR LINKS ARE ALREADY FILLED IN:
+     - GOOGLE_WEBHOOK_URL: your Apps Script Web App URL
+     - CALENDLY_URL: your Calendly 30-min link
 -->
 
 <!doctype html>
@@ -14,6 +17,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Real Estate Lead Chatbot</title>
+
   <style>
     /* ---------- BASIC PAGE RESET ---------- */
     * { box-sizing: border-box; }
@@ -181,6 +185,7 @@
       border-radius: 14px;
       border: 1px solid rgba(17,24,39,.10);
       overflow: hidden;
+      width: 100%;
     }
     .calendlyHeader {
       padding: 10px 12px;
@@ -189,14 +194,17 @@
       font-size: 13px;
       font-weight: 700;
     }
+    /* IMPORTANT: give Calendly enough height so it's not a tiny box */
     .calendlyInlineWidget {
-      min-height: 520px; /* ensures it shows nicely */
+      height: 700px;
+      min-height: 700px;
     }
 
     /* ---------- SMALL SCREENS ---------- */
     @media (max-width: 420px) {
       .chat { right: 10px; left: 10px; width: auto; }
       .launcher { right: 10px; }
+      .calendlyInlineWidget { height: 720px; min-height: 720px; }
     }
   </style>
 </head>
@@ -223,18 +231,18 @@
   </div>
 </div>
 
-<!-- Calendly embed script (needed for the widget to appear) -->
+<!-- Calendly embed script (needed for window.Calendly.initInlineWidget) -->
 <script src="https://assets.calendly.com/assets/external/widget.js" async></script>
 
 <script>
   /**************************************************************
-   * 1) EDIT THESE TWO LINES (MOST IMPORTANT)
+   * YOUR LIVE LINKS (ALREADY FILLED IN)
    **************************************************************/
   const GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxUTceHpoGlYnc5-HPwL7nFI-AD9Ex3eL4aFLSttHLE5Xjn0IR0u8y7aS1AnsRiBulvlQ/exec";
-  const CALENDLY_URL = "https://calendly.com/owpries23/30-minute-meeting";
+  const CALENDLY_URL = "https://calendly.com/owpries23/30min";
 
   /**************************************************************
-   * 2) QUESTION LIST (IN THE EXACT ORDER YOU REQUIRED)
+   * QUESTION LIST (IN THE EXACT ORDER YOU REQUIRED)
    **************************************************************/
   const questions = [
     { key: "fullName", label: "Full name", type: "text", placeholder: "Ex: Taylor Johnson" },
@@ -250,20 +258,18 @@
   ];
 
   /**************************************************************
-   * 3) SIMPLE VALIDATION (EMAIL + PHONE)
-   *    - Email must look like name@domain.com
-   *    - Phone must have at least 10 digits
+   * VALIDATION (EMAIL + PHONE)
    **************************************************************/
   function isValidEmail(email) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   }
   function isValidPhone(phone) {
-    const digits = phone.replace(/\D/g, ""); // remove non-digits
+    const digits = phone.replace(/\D/g, "");
     return digits.length >= 10;
   }
 
   /**************************************************************
-   * 4) CHAT UI HELPERS
+   * CHAT UI HELPERS
    **************************************************************/
   const launcherBtn = document.getElementById("launcherBtn");
   const chatWindow = document.getElementById("chatWindow");
@@ -299,28 +305,26 @@
   }
 
   /**************************************************************
-   * 5) CHATBOT LOGIC
+   * CHATBOT LOGIC
    **************************************************************/
   let stepIndex = 0;
-  const answers = {}; // stores each answer by key
+  const answers = {};
 
   function renderCurrentInput() {
     clearError();
     inputRow.innerHTML = "";
 
-    // If finished questions, don't show input controls anymore
     if (stepIndex >= questions.length) {
       hintText.textContent = "You can book a time below.";
       return;
     }
 
     const q = questions[stepIndex];
-
-    // Build either a text/email/tel input OR a dropdown select
     let control;
 
     if (q.type === "select") {
       control = document.createElement("select");
+
       const defaultOpt = document.createElement("option");
       defaultOpt.value = "";
       defaultOpt.textContent = "Select an option...";
@@ -345,15 +349,12 @@
 
     control.id = "answerControl";
 
-    // Send button
     const sendBtn = document.createElement("button");
     sendBtn.className = "sendBtn";
     sendBtn.textContent = "Send";
 
-    // When user clicks Send
     sendBtn.addEventListener("click", () => handleSend());
 
-    // Also allow Enter key to send (for text inputs)
     control.addEventListener("keydown", (e) => {
       if (e.key === "Enter") handleSend();
     });
@@ -361,7 +362,6 @@
     inputRow.appendChild(control);
     inputRow.appendChild(sendBtn);
 
-    // Put cursor in the input automatically
     setTimeout(() => control.focus(), 50);
   }
 
@@ -380,13 +380,11 @@
 
     const rawValue = (control.value || "").trim();
 
-    // Basic "required" check
     if (!rawValue) {
       showError("Please enter/select an answer.");
       return;
     }
 
-    // Validate email + phone at the right steps
     if (q.key === "email" && !isValidEmail(rawValue)) {
       showError("That email doesn't look right. Example: name@email.com");
       return;
@@ -396,13 +394,8 @@
       return;
     }
 
-    // Save answer
     answers[q.key] = rawValue;
-
-    // Show user's message bubble
     addBubble(rawValue, "user");
-
-    // Move to next question
     stepIndex++;
 
     if (stepIndex < questions.length) {
@@ -413,17 +406,14 @@
   }
 
   /**************************************************************
-   * 6) AFTER QUESTION #10: SAVE TO GOOGLE SHEETS + SHOW CALENDLY
+   * AFTER QUESTION #10: SAVE TO GOOGLE SHEETS + SHOW CALENDLY
    **************************************************************/
   async function finishFlow() {
     addBubble("Thanks! Saving your info now…", "bot");
 
-    // Build the consolidated responses text (all answers in one string)
     const consolidated = questions.map(q => `${q.label} ${answers[q.key] || ""}`).join(" | ");
 
-    // Build payload that matches your Google Sheet column order
     const payload = {
-      // Timestamp is created automatically in Apps Script (recommended)
       fullName: answers.fullName || "",
       email: answers.email || "",
       phone: answers.phone || "",
@@ -437,9 +427,8 @@
       consolidatedResponses: consolidated
     };
 
-    // IMPORTANT: "no-cors" avoids CORS issues for beginners.
-    // It means we won't "read" the response back, but it will still send.
     try {
+      // no-cors prevents CORS issues for beginners (still sends the data)
       await fetch(GOOGLE_WEBHOOK_URL, {
         method: "POST",
         mode: "no-cors",
@@ -452,14 +441,16 @@
 
     } catch (err) {
       console.error(err);
-      addBubble("I couldn't save your info (yet). Please try again or contact the agent directly.", "bot");
-      addBubble("Common fix: make sure your Google Apps Script is deployed as a Web App with access set to 'Anyone'.", "bot");
+      addBubble("I couldn't save your info. Please try again or contact the agent directly.", "bot");
+      addBubble("Common fix: Apps Script must be deployed as a Web App with access set to 'Anyone'.", "bot");
     }
 
-    // Hide input controls after finishing
     inputRow.innerHTML = "";
   }
 
+  /**************************************************************
+   * FIXED CALENDLY EMBED (INIT AFTER INSERT)
+   **************************************************************/
   function showCalendlyWidget() {
     const wrap = document.createElement("div");
     wrap.className = "calendlyWrap";
@@ -468,16 +459,17 @@
     header.className = "calendlyHeader";
     header.textContent = "Schedule your consultation";
 
+    // Calendly will render inside this div
     const widget = document.createElement("div");
     widget.className = "calendlyInlineWidget";
-    widget.setAttribute("data-url", CALENDLY_URL);
 
     wrap.appendChild(header);
     wrap.appendChild(widget);
 
-    // Put the Calendly widget as a "bot bubble" style element
+    // Put it into the chat as a bot "message"
     const row = document.createElement("div");
     row.className = "bubbleRow bot";
+
     const bubble = document.createElement("div");
     bubble.className = "bubble";
     bubble.style.padding = "0";
@@ -490,18 +482,36 @@
     chatBody.appendChild(row);
     scrollToBottom();
 
-    // Calendly needs a moment to initialize
-    setTimeout(() => scrollToBottom(), 700);
+    // Initialize Calendly programmatically (this is the key fix)
+    const init = () => {
+      if (window.Calendly && typeof window.Calendly.initInlineWidget === "function") {
+        window.Calendly.initInlineWidget({
+          url: CALENDLY_URL,
+          parentElement: widget
+        });
+        scrollToBottom();
+        return true;
+      }
+      return false;
+    };
+
+    // Try now, and retry shortly if the Calendly script is still loading
+    if (!init()) {
+      setTimeout(() => {
+        if (!init()) {
+          addBubble("Calendly didn’t load. Please refresh the page and try again.", "bot");
+        }
+      }, 1200);
+    }
   }
 
   /**************************************************************
-   * 7) OPEN/CLOSE CHAT + START MESSAGE
+   * OPEN/CLOSE CHAT + START MESSAGE
    **************************************************************/
   launcherBtn.addEventListener("click", () => {
     chatWindow.style.display = "flex";
     launcherBtn.style.display = "none";
 
-    // If first time opened, start the conversation
     if (chatBody.children.length === 0) {
       addBubble("Hi! I can help you get started. First, a few quick questions.", "bot");
       askNextQuestion();
@@ -513,5 +523,6 @@
     launcherBtn.style.display = "flex";
   });
 </script>
+
 </body>
 </html>
