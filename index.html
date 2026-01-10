@@ -4,7 +4,9 @@
      - Asks 10 qualification questions in order
      - Validates email + phone
      - Saves results to Google Sheets via Google Apps Script Web App
-     - After Q10, shows Calendly scheduling INSIDE the chat (fixed + full size)
+     - After Q10:
+         - If opened normally (not embedded): shows Calendly INLINE inside the chat
+         - If embedded on an agent website (iframe): shows a Calendly POPUP button (avoids "refused to connect")
 
      YOUR LINKS ARE ALREADY FILLED IN:
      - GOOGLE_WEBHOOK_URL: your Apps Script Web App URL
@@ -178,7 +180,7 @@
       display: none;
     }
 
-    /* ---------- CALENDLY AREA INSIDE CHAT ---------- */
+    /* ---------- CALENDLY INLINE AREA INSIDE CHAT ---------- */
     .calendlyWrap {
       margin-top: 12px;
       background: #fff;
@@ -194,10 +196,30 @@
       font-size: 13px;
       font-weight: 700;
     }
-    /* IMPORTANT: give Calendly enough height so it's not a tiny box */
     .calendlyInlineWidget {
       height: 700px;
       min-height: 700px;
+    }
+
+    /* ---------- CALENDLY POPUP BUTTON (USED WHEN EMBEDDED) ---------- */
+    .calBtnWrap { margin-top: 10px; width: 100%; }
+    .calBtn {
+      width: 100%;
+      padding: 14px 14px;
+      border-radius: 14px;
+      border: none;
+      background: #2563eb;
+      color: #fff;
+      font-weight: 800;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .calBtn:active { transform: translateY(1px); }
+    .calSmallText {
+      margin-top: 8px;
+      font-size: 12px;
+      color: rgba(17,24,39,.70);
+      line-height: 1.35;
     }
 
     /* ---------- SMALL SCREENS ---------- */
@@ -231,7 +253,7 @@
   </div>
 </div>
 
-<!-- Calendly embed script (needed for window.Calendly.initInlineWidget) -->
+<!-- Calendly embed script (needed for initInlineWidget + initPopupWidget) -->
 <script src="https://assets.calendly.com/assets/external/widget.js" async></script>
 
 <script>
@@ -240,6 +262,19 @@
    **************************************************************/
   const GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxUTceHpoGlYnc5-HPwL7nFI-AD9Ex3eL4aFLSttHLE5Xjn0IR0u8y7aS1AnsRiBulvlQ/exec";
   const CALENDLY_URL = "https://calendly.com/owpries23/30min";
+
+  /**************************************************************
+   * HELPER: Detect if we're embedded in an iframe
+   * - If embedded: use Calendly POPUP (avoids "refused to connect")
+   * - If not embedded: use Calendly INLINE (nice in-chat experience)
+   **************************************************************/
+  function isInsideIframe() {
+    try {
+      return window.self !== window.top;
+    } catch (e) {
+      return true;
+    }
+  }
 
   /**************************************************************
    * QUESTION LIST (IN THE EXACT ORDER YOU REQUIRED)
@@ -407,6 +442,8 @@
 
   /**************************************************************
    * AFTER QUESTION #10: SAVE TO GOOGLE SHEETS + SHOW CALENDLY
+   * - If embedded on agent site: POPUP button (avoids iframe blocks)
+   * - If standalone page: INLINE Calendly inside chat
    **************************************************************/
   async function finishFlow() {
     addBubble("Thanks! Saving your info now…", "bot");
@@ -428,7 +465,6 @@
     };
 
     try {
-      // no-cors prevents CORS issues for beginners (still sends the data)
       await fetch(GOOGLE_WEBHOOK_URL, {
         method: "POST",
         mode: "no-cors",
@@ -437,7 +473,14 @@
       });
 
       addBubble("Saved ✅ Now you can book a time that works for you:", "bot");
-      showCalendlyWidget();
+
+      if (isInsideIframe()) {
+        // Embedded on an agent website: popup avoids "refused to connect"
+        showCalendlyPopupButton();
+      } else {
+        // Opened directly: inline looks best
+        showCalendlyInline();
+      }
 
     } catch (err) {
       console.error(err);
@@ -449,9 +492,9 @@
   }
 
   /**************************************************************
-   * FIXED CALENDLY EMBED (INIT AFTER INSERT)
+   * INLINE CALENDLY (works when NOT embedded)
    **************************************************************/
-  function showCalendlyWidget() {
+  function showCalendlyInline() {
     const wrap = document.createElement("div");
     wrap.className = "calendlyWrap";
 
@@ -459,14 +502,12 @@
     header.className = "calendlyHeader";
     header.textContent = "Schedule your consultation";
 
-    // Calendly will render inside this div
     const widget = document.createElement("div");
     widget.className = "calendlyInlineWidget";
 
     wrap.appendChild(header);
     wrap.appendChild(widget);
 
-    // Put it into the chat as a bot "message"
     const row = document.createElement("div");
     row.className = "bubbleRow bot";
 
@@ -482,7 +523,6 @@
     chatBody.appendChild(row);
     scrollToBottom();
 
-    // Initialize Calendly programmatically (this is the key fix)
     const init = () => {
       if (window.Calendly && typeof window.Calendly.initInlineWidget === "function") {
         window.Calendly.initInlineWidget({
@@ -495,7 +535,6 @@
       return false;
     };
 
-    // Try now, and retry shortly if the Calendly script is still loading
     if (!init()) {
       setTimeout(() => {
         if (!init()) {
@@ -503,6 +542,45 @@
         }
       }, 1200);
     }
+  }
+
+  /**************************************************************
+   * POPUP CALENDLY (works when embedded)
+   **************************************************************/
+  function showCalendlyPopupButton() {
+    const wrap = document.createElement("div");
+    wrap.className = "calBtnWrap";
+
+    const btn = document.createElement("button");
+    btn.className = "calBtn";
+    btn.textContent = "Book a time on my calendar";
+
+    const note = document.createElement("div");
+    note.className = "calSmallText";
+    note.textContent = "A scheduling window will open. Pick a time and you’re all set.";
+
+    wrap.appendChild(btn);
+    wrap.appendChild(note);
+
+    const row = document.createElement("div");
+    row.className = "bubbleRow bot";
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.style.width = "100%";
+
+    bubble.appendChild(wrap);
+    row.appendChild(bubble);
+    chatBody.appendChild(row);
+    scrollToBottom();
+
+    btn.addEventListener("click", () => {
+      if (window.Calendly && typeof window.Calendly.initPopupWidget === "function") {
+        window.Calendly.initPopupWidget({ url: CALENDLY_URL });
+      } else {
+        window.open(CALENDLY_URL, "_blank");
+      }
+    });
   }
 
   /**************************************************************
