@@ -1,16 +1,23 @@
 <!-- FILE: index.html
      WHAT THIS DOES:
      - Floating chat widget for real estate sites
-     - Asks 10 qualification questions in order
+     - Asks qualification questions in order:
+         1) Are you buying, selling, or both? (NEW)
+         2) Full name
+         3) Email
+         4) Phone
+         Then:
+           - Buyer questions (if Buying or Both)
+           - Seller questions (if Selling or Both)
      - Validates email + phone
      - Saves results to Google Sheets via Google Apps Script Web App
-     - After Q10:
-         - If opened normally (not embedded): shows Calendly INLINE inside the chat
-         - If embedded on an agent website (iframe): shows a Calendly POPUP button (avoids "refused to connect")
+     - After the questions, shows Calendly:
+         - If embedded on an agent website (iframe): POPUP button (avoids "refused to connect")
+         - If opened directly: INLINE Calendly inside the chat
 
-     YOUR LINKS ARE ALREADY FILLED IN:
-     - GOOGLE_WEBHOOK_URL: your Apps Script Web App URL
-     - CALENDLY_URL: your Calendly 30-min link
+     LINKS ALREADY FILLED IN:
+     - GOOGLE_WEBHOOK_URL: https://script.google.com/macros/s/AKfycbxUTceHpoGlYnc5-HPwL7nFI-AD9Ex3eL4aFLSttHLE5Xjn0IR0u8y7aS1AnsRiBulvlQ/exec
+     - CALENDLY_URL: https://calendly.com/owpries23/30min
 -->
 
 <!doctype html>
@@ -265,8 +272,6 @@
 
   /**************************************************************
    * HELPER: Detect if we're embedded in an iframe
-   * - If embedded: use Calendly POPUP (avoids "refused to connect")
-   * - If not embedded: use Calendly INLINE (nice in-chat experience)
    **************************************************************/
   function isInsideIframe() {
     try {
@@ -277,12 +282,16 @@
   }
 
   /**************************************************************
-   * QUESTION LIST (IN THE EXACT ORDER YOU REQUIRED)
+   * QUESTION SETS
    **************************************************************/
-  const questions = [
+  const baseQuestions = [
+    { key: "leadType", label: "Are you buying, selling, or both?", type: "select", options: ["Buying", "Selling", "Both"] },
     { key: "fullName", label: "Full name", type: "text", placeholder: "Ex: Taylor Johnson" },
     { key: "email", label: "Email address", type: "email", placeholder: "Ex: taylor@email.com" },
-    { key: "phone", label: "Phone number", type: "tel", placeholder: "Ex: 319-555-1234" },
+    { key: "phone", label: "Phone number", type: "tel", placeholder: "Ex: 319-555-1234" }
+  ];
+
+  const buyerQuestions = [
     { key: "firstTimeBuyer", label: "Are you a first-time buyer?", type: "select", options: ["Yes", "No"] },
     { key: "budgetRange", label: "What's your budget range?", type: "select", options: ["Under $200k", "$200k-$400k", "$400k-$600k", "$600k-$800k", "$800k+"] },
     { key: "timeline", label: "When are you looking to move?", type: "select", options: ["Within 1 month", "1-3 months", "3-6 months", "6-12 months", "Just browsing"] },
@@ -291,6 +300,18 @@
     { key: "preApproved", label: "Are you pre-approved for a mortgage?", type: "select", options: ["Yes", "No", "Not yet"] },
     { key: "needToSell", label: "Do you need to sell your current home first?", type: "select", options: ["Yes", "No", "I'm renting", "Not applicable"] }
   ];
+
+  const sellerQuestions = [
+    { key: "sellerAddress", label: "What is the property address (or city/neighborhood) you're selling?", type: "text", placeholder: "Ex: 123 Main St, Cedar Falls" },
+    { key: "propertyType", label: "What type of property is it?", type: "select", options: ["Single-family", "Condo", "Townhome", "Multi-family", "Land", "Other"] },
+    { key: "estimatedValue", label: "What’s your estimated home value range?", type: "select", options: ["Under $200k", "$200k-$400k", "$400k-$600k", "$600k-$800k", "$800k+"] },
+    { key: "sellTimeline", label: "When would you like to sell?", type: "select", options: ["ASAP", "1-3 months", "3-6 months", "6-12 months", "Just browsing"] },
+    { key: "currentlyListed", label: "Is the home currently listed with an agent?", type: "select", options: ["Yes", "No"] },
+    { key: "condition", label: "What best describes the home’s condition?", type: "select", options: ["No repairs needed", "Minor repairs", "Major repairs", "Not sure"] }
+  ];
+
+  // We'll build this list after the user answers leadType
+  let questions = [...baseQuestions];
 
   /**************************************************************
    * VALIDATION (EMAIL + PHONE)
@@ -431,6 +452,21 @@
 
     answers[q.key] = rawValue;
     addBubble(rawValue, "user");
+
+    // NEW: If leadType answered, build the remaining question flow
+    if (q.key === "leadType") {
+      const lt = rawValue; // Buying / Selling / Both
+
+      questions = [...baseQuestions];
+      if (lt === "Buying") {
+        questions = questions.concat(buyerQuestions);
+      } else if (lt === "Selling") {
+        questions = questions.concat(sellerQuestions);
+      } else {
+        questions = questions.concat(buyerQuestions).concat(sellerQuestions);
+      }
+    }
+
     stepIndex++;
 
     if (stepIndex < questions.length) {
@@ -441,9 +477,7 @@
   }
 
   /**************************************************************
-   * AFTER QUESTION #10: SAVE TO GOOGLE SHEETS + SHOW CALENDLY
-   * - If embedded on agent site: POPUP button (avoids iframe blocks)
-   * - If standalone page: INLINE Calendly inside chat
+   * AFTER FINAL QUESTION: SAVE TO GOOGLE SHEETS + SHOW CALENDLY
    **************************************************************/
   async function finishFlow() {
     addBubble("Thanks! Saving your info now…", "bot");
@@ -451,9 +485,14 @@
     const consolidated = questions.map(q => `${q.label} ${answers[q.key] || ""}`).join(" | ");
 
     const payload = {
+      leadType: answers.leadType || "",
+
+      // Contact
       fullName: answers.fullName || "",
       email: answers.email || "",
       phone: answers.phone || "",
+
+      // Buyer fields
       firstTimeBuyer: answers.firstTimeBuyer || "",
       budgetRange: answers.budgetRange || "",
       timeline: answers.timeline || "",
@@ -461,6 +500,16 @@
       bedrooms: answers.bedrooms || "",
       preApproved: answers.preApproved || "",
       needToSell: answers.needToSell || "",
+
+      // Seller fields
+      sellerAddress: answers.sellerAddress || "",
+      propertyType: answers.propertyType || "",
+      estimatedValue: answers.estimatedValue || "",
+      sellTimeline: answers.sellTimeline || "",
+      currentlyListed: answers.currentlyListed || "",
+      condition: answers.condition || "",
+
+      // Consolidated
       consolidatedResponses: consolidated
     };
 
@@ -475,10 +524,8 @@
       addBubble("Saved ✅ Now you can book a time that works for you:", "bot");
 
       if (isInsideIframe()) {
-        // Embedded on an agent website: popup avoids "refused to connect"
         showCalendlyPopupButton();
       } else {
-        // Opened directly: inline looks best
         showCalendlyInline();
       }
 
